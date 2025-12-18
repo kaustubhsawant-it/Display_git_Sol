@@ -1,4 +1,7 @@
-mss
-flask-socketio
 flask
+flask-socketio
 eventlet
+mss
+opencv-python
+numpy
+pyautogui
