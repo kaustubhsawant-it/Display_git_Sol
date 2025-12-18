@@ -25,3 +25,11 @@ This project wasn't just built; it was optimized through three distinct phases:
 
 ## 📈 Future Lessons
 While this project proved that software optimization can bridge the gap for older hardware, it also highlighted the efficiency of native display protocols. For users seeking a "no-setup" experience, a hardware HDMI dummy plug combined with this software provides the most stable result.
+
+🛠️ What each "Gear" does (For your knowledge)
+flask & flask-socketio: The engine that hosts the webpage and handles the "live" connection.
+eventlet: This is the "Turbocharger." It allows Python to handle the massive flow of binary image data without crashing the web server.
+mss: The "High-Speed Camera." It’s much faster than standard screenshot tools for capturing macOS frames.
+opencv-python: The "Processor." This handles the JPEG compression, the 9:16 rotation, and drawing the virtual mouse cursor.
+numpy: The "Math Core." OpenCV and MSS use this to handle the image data as a grid of numbers.
+pyautogui: The "Radar." This tracks where your mouse is on the Mac so we can draw it on the Windows screen.
