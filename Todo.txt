@@ -1,0 +1,20 @@
+📄 Project: "VibeBridge" – Production Specs
+1. The Quality/Latency Paradox
+Resolution Cap: Hard limit at 1080p (FHD). 2K/4K kills Wi-Fi bandwidth and adds frame-buffer lag. 1080p is "Retina enough" for a 13-15" laptop screen.
+Target Framerate: 60FPS (stable) or 30FPS (low-power mode).
+Animation System: No "teleporting" cursors. We will implement Tweening/Interpolation. If the mouse moves from A to B, the app calculates the path so the cursor "glides" smoothly, even if a data packet is 10ms late.
+2. Cross-Platform Core (The Triple-Threat)
+We will use a Hybrid Tech Stack to avoid legal issues and dependency on other apps:
+Host App (Mac/Windows/Linux): Built with Electron + Python. Electron handles the "Vibe" (animations/UI), while Python handles the heavy lifting of screen capture.
+Client App (Web/Android/iOS): A PWA (Progressive Web App). No download required for the "Viewer" device—just a URL or QR code.
+3. Feature: The "Party Speaker" (Audio Mesh)
+The Concept: One Host (PC) → Multiple Clients (Phones).
+Tech: Use the Web Audio API and a Jitter Buffer.
+The Vibe: When you toggle "Party Mode," the PC streams audio to every connected phone simultaneously. To keep them in sync, we use a "NTP-style" time-sync so all phones play the exact same beat at the same millisecond.
+4. The UI/UX Dashboard
+Sandwich Menu: Holds "Pro" settings (Resolution, Bitrate, Security).
+Main Stage: A simple "Start Session" button with a real-time "Latency Meter" (shows ping in ms so users know if their Wi-Fi is the problem).
+Input Toggle: A smooth toggle switch to "Enable Remote Control" (Keyboard/Mouse).
+🛡️ Security & Scalability
+Anti-Piracy: Hardware ID (HWID) locking. Your "Pro" key works on your Mac only.
+Privacy: All traffic is Local P2P (WebRTC). We don't see your screen; your data never leaves your room.
