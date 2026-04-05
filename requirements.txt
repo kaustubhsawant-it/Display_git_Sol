@@ -1,7 +1,13 @@
-flask
-flask-socketio
-eventlet
-mss
-opencv-python
-numpy
-pyautogui
+flask==3.1.0
+flask-socketio==5.5.1
+eventlet==0.39.1
+mss==10.0.0
+opencv-python==4.10.0.84
+numpy==2.2.4
+pyautogui==0.9.54
+pyobjc-framework-Quartz==12.1
+qrcode==8.0
+zeroconf==0.136.2
+
+# Windows client (client_windows.py) — install on the Windows machine only
+# pip install pygame python-socketio[client] websocket-client opencv-python numpy

@@ -1,0 +1,359 @@
+================================================================================
+  DISPLAY STREAMING — FULL IMPLEMENTATION PLAN
+  Project: Display_git_Sol
+  Last Updated: 2026-04-05
+  Hardware: Apple M3 Pro (Apple Silicon)
+================================================================================
+
+VISION
+------
+A self-contained LAN second monitor solution.
+No BetterDisplay. No AirPlay. No cables.
+Mac creates a virtual display, streams it to any phone/tablet browser on the
+same WiFi. The client can interact with it (touch = mouse), rotate the view
+via a button, and see a live 1920x1080 (or 1080x1920 rotated) feed at 30fps.
+
+Final architecture:
+
+  [ CGVirtualDisplay 1920x1080 ]
+          |
+  [ Screen Capture (by displayID) ]
+          |
+  [ JPEG Encode @ 30fps ]
+          |
+  [ Flask-SocketIO | Auth | Rate Limit | Logging ]
+          |
+          | WebSocket (LAN)
+          |
+  [ Browser Client — Phone/Tablet ]
+    - Canvas rendering
+    - Rotate button (portrait/landscape toggle)
+    - Touch/click/keyboard input forwarding
+    - QR code scan to connect
+
+--------------------------------------------------------------------------------
+
+ENVIRONMENT NOTES
+-----------------
+- Machine      : Apple M3 Pro (Apple Silicon)
+- OS Target    : macOS 12.4+ (required for CGVirtualDisplay public API)
+- CGVirtualDisplay on Apple Silicon may require the process to run inside
+  a signed .app bundle (code signature context). We build as a bare script
+  first — if CGVirtualDisplay fails silently, we wrap with PyInstaller
+  into a minimal .app (10 min fix, permanent solution).
+- All dependencies managed via requirements.txt with pinned versions.
+
+--------------------------------------------------------------------------------
+
+PHASE A — HARDEN EXISTING CODE
+-------------------------------
+Goal: Fix all 15 known bugs. One rewrite of server.py and requirements.txt.
+No new features. Just making what exists solid and safe.
+
+  Fix 1  — Dynamic monitor detection
+           Read len(sct.monitors), pick last available, log what was chosen.
+           Configurable via MONITOR_INDEX env var.
+           Fallback to primary (index 1) if selected index doesn't exist.
+
+  Fix 2  — Capture loop error handling
+           Wrap inner while True in try/except.
+           Transient errors (encoding, frame grab) → log + continue.
+           Hard failures → log + short sleep + retry.
+
+  Fix 3  — Background task restart
+           Wrap capture_and_stream() in an outer while True retry loop.
+           If function crashes, wait 2s and restart automatically.
+           Log each restart attempt.
+
+  Fix 4  — CORS restriction
+           cors_allowed_origins reads from CORS_ORIGINS env var.
+           Default: same-origin only (not "*").
+
+  Fix 5  — Token authentication
+           Client must pass ?token=XYZ as query param on WebSocket connect.
+           Checked in SocketIO 'connect' event handler.
+           Wrong/missing token → immediate disconnect.
+           Token set via SECRET_TOKEN env var (random UUID if not set, printed at startup).
+
+  Fix 6  — Rate limiting
+           Track active connection count.
+           Reject new connections above MAX_CLIENTS threshold (default: 4).
+
+  Fix 7  — Threading lock for rotation_state
+           threading.Lock() wrapping all reads and writes to rotation_state.
+
+  Fix 8  — Input validation on rotate_display event
+           Whitelist check: only accept "portrait" or "landscape".
+           Ignore and log anything else.
+
+  Fix 9  — JavaScript memory leak
+           Add img.onerror = () => URL.revokeObjectURL(url)
+           Ensures blob URL is always revoked, even on failed frames.
+
+  Fix 10 — Proper logging
+           Replace all print() calls with Python logging module.
+           Log level configurable via LOG_LEVEL env var (default: INFO).
+           Format: timestamp | level | message
+
+  Fix 11 — Version pinning in requirements.txt
+           Run pip freeze, lock all versions.
+           Ensures reproducible installs.
+
+  Fix 12 — All config via env vars
+           MONITOR_INDEX   — which display to capture (default: last available)
+           PORT            — server port (default: 5001)
+           HOST            — bind address (default: 0.0.0.0)
+           JPEG_QUALITY    — compression quality (default: 65)
+           FPS             — frames per second cap (default: 30)
+           SECRET_TOKEN    — auth token (default: random UUID, printed at start)
+           CORS_ORIGINS    — allowed origins (default: same-origin)
+           MAX_CLIENTS     — max simultaneous connections (default: 4)
+           LOG_LEVEL       — logging verbosity (default: INFO)
+
+  Fix 13 — Graceful shutdown
+           signal.signal(SIGINT, handler) and signal.signal(SIGTERM, handler)
+           Handler sets a stop flag, capture loop checks it, exits cleanly.
+
+  Fix 14 — FPS cap
+           Replace socketio.sleep(0.01) [100fps] with sleep(1/FPS) [default 30fps].
+           1080p JPEG @ 30fps ≈ 6 MB/s — well within LAN WiFi capacity.
+
+  Fix 15 — No tests (deferred to Phase D)
+           Covered later when architecture is stable.
+
+Output of Phase A:
+  - server.py    (rewritten, hardened)
+  - requirements.txt  (pinned versions)
+
+--------------------------------------------------------------------------------
+
+PHASE B — VIRTUAL DISPLAY (NO BETTERDISC)
+------------------------------------------
+Goal: Create a 1920x1080 virtual display on macOS programmatically.
+      macOS sees it as a real extended monitor. No third-party app needed.
+
+Approach: CGVirtualDisplay (public CoreGraphics API, macOS 12.4+)
+
+  How it works:
+    CGVirtualDisplayDescriptor  →  define width, height, ppi, refresh rate, name
+    CGVirtualDisplay.initWithDescriptor_()  →  macOS registers new display
+    virtual_display.displayID()  →  returns the display ID to capture specifically
+
+  Python access:
+    Via pyobjc-framework-Quartz:
+      from Quartz import CGVirtualDisplayDescriptor, CGVirtualDisplay
+
+  Integration with capture:
+    Instead of sct.monitors[index], capture by displayID directly.
+    This is cleaner — no index guessing, always gets the right display.
+
+  Apple Silicon caveat:
+    CGVirtualDisplay on M-series may require the process to be in a
+    signed .app bundle. Plan:
+      Step 1 — Try as bare Python script first.
+      Step 2 — If it fails, wrap with PyInstaller into minimal .app bundle.
+               This is a 10-minute fix and permanently solves the issue.
+
+  New dependencies:
+    pyobjc-framework-Quartz  (pinned version)
+
+  Virtual display spec:
+    Resolution : 1920 x 1080
+    Refresh    : 60 Hz
+    PPI        : 96
+    Name       : "StreamDisplay"
+    HiDPI      : False (standard 1:1 pixel mapping)
+
+  Lifecycle:
+    - Virtual display created at server startup
+    - Stays alive while server runs
+    - Destroyed cleanly on SIGINT/SIGTERM (Phase A graceful shutdown handles this)
+
+Output of Phase B:
+  - virtual_display.py  (CGVirtualDisplay wrapper, standalone module)
+  - server.py           (updated to use virtual display + capture by displayID)
+
+--------------------------------------------------------------------------------
+
+PHASE C — INPUT FORWARDING (INTERACTIVE SECOND MONITOR)
+---------------------------------------------------------
+Goal: Touch/click on phone = mouse action on the virtual display.
+      This is what separates a mirror from a real second monitor.
+
+Client → Server event flow:
+  1. Client touch/click at canvas position (cx, cy)
+  2. Scale to frame resolution:
+       frame_x = cx * (frame_width / canvas_display_width)
+       frame_y = cy * (frame_height / canvas_display_height)
+  3. Send via WebSocket: { x: frame_x, y: frame_y, type: "click" }
+  4. Server maps to absolute screen coordinates:
+       abs_x = monitor.left + frame_x
+       abs_y = monitor.top + frame_y
+  5. pyautogui injects the action into macOS
+
+Events to forward:
+  mousemove / touchmove   →  pyautogui.moveTo(abs_x, abs_y)
+  click / tap             →  pyautogui.click(abs_x, abs_y, button='left')
+  long press              →  pyautogui.click(abs_x, abs_y, button='right')
+  scroll / wheel          →  pyautogui.scroll(amount, x=abs_x, y=abs_y)
+  keydown                 →  pyautogui.typewrite() / pyautogui.press()
+  pinch (zoom gesture)    →  logged but ignored for now (future: zoom the canvas)
+
+Rotation coordinate mapping:
+  When in portrait mode (frame is rotated 90° clockwise):
+    The canvas shows a 1080x1920 image.
+    Touch coordinates must be un-rotated before sending to pyautogui.
+    Transform: rotated_x, rotated_y → original_x = rotated_y, original_y = (width - rotated_x)
+
+Client UI additions:
+  - Rotate button (top-right corner, always visible)
+      Landscape mode: frame = 1920x1080
+      Portrait mode : frame = 1080x1920 (rotated 90° clockwise)
+      Button toggles between the two, sends 'rotate_display' event to server
+      NOT auto-detected from device orientation — user-controlled explicitly
+  - Cursor indicator: small dot follows touch position
+  - Keyboard button: opens on-screen keyboard (mobile)
+  - Fullscreen button: enters browser fullscreen API
+
+Input validation on server:
+  - All coordinate values checked: must be numbers, within frame bounds
+  - Event type whitelisted
+  - Malformed events logged and dropped
+
+Output of Phase C:
+  - server.py  (updated with input event handlers)
+  - client HTML (inline in server.py, updated with input forwarding + rotate button)
+
+--------------------------------------------------------------------------------
+
+PHASE D — UX POLISH & RELIABILITY
+------------------------------------
+Goal: Make it feel like a real product, not a dev script.
+
+  1. QR Code at startup
+     - Generate QR code containing: http://<local_ip>:<port>/?token=<token>
+     - Print to terminal using qrcode library (ASCII art in terminal)
+     - Phone scans it — opens browser, auth token auto-included in URL
+     - Library: qrcode[pil]
+
+  2. mDNS / Bonjour auto-discovery
+     - Register service via zeroconf library
+     - Phone browser (or future companion app) can find server without knowing IP
+     - Service name: "_streamdisplay._tcp.local."
+
+  3. Adaptive frame rate
+     - Track WebSocket send queue size
+     - If client falls behind: drop to 15fps automatically
+     - When caught up: return to configured FPS
+     - Prevents memory buildup and stream freezing
+
+  4. Health endpoint
+     - GET /health returns JSON:
+       { uptime, connected_clients, current_fps, virtual_display_id, monitor_res }
+     - Useful for debugging without touching the terminal
+
+  5. Single launcher script (start.sh)
+     - Checks Python version and dependencies
+     - Generates SECRET_TOKEN if not set
+     - Starts server
+     - Prints QR code
+     - Handles cleanup on exit
+
+  6. Basic tests
+     - Unit test: rotation coordinate transform math
+     - Unit test: input validation (whitelist, bounds checking)
+     - Integration test: server starts, client connects with token, receives frames
+
+  New dependencies:
+    qrcode[pil]
+    zeroconf
+    Pillow (likely already pulled in)
+
+Output of Phase D:
+  - start.sh
+  - tests/test_transform.py
+  - tests/test_validation.py
+  - tests/test_integration.py
+  - server.py (adaptive FPS, /health endpoint)
+
+--------------------------------------------------------------------------------
+
+PHASE E — WINDOWS TO MAC MODE (LAST PHASE)
+--------------------------------------------
+Goal: A Windows PC can use the Mac's virtual display as its second monitor.
+      Instead of a phone browser, the client is a Windows machine.
+
+Concept:
+  Windows side runs a lightweight client that:
+    - Connects to the Mac server via WebSocket (same protocol)
+    - Renders the stream in a borderless window (acts like a real monitor)
+    - Forwards all Windows mouse/keyboard events to the Mac server
+    - Optionally: registers itself as a display in Windows (advanced)
+
+  Mac side:
+    - No changes to core streaming
+    - Input forwarding already built in Phase C
+    - Add mouse movement delta mode (relative, not absolute) for seamless
+      cursor transition between Windows and Mac screens
+
+  Windows client options (to decide later):
+    Option A — Electron app (cross-platform, easiest)
+               Wraps the browser client in a native window
+               Can go borderless/fullscreen
+               Registers as a fake second monitor via Windows Display API (stretch goal)
+
+    Option B — Python + tkinter/pygame client on Windows
+               Simpler, no Electron dependency
+               Less polished but functional
+
+    Option C — Pure browser (same as phone client)
+               Zero additional development
+               Works but feels like a browser, not a monitor
+
+  Seamless cursor handoff (stretch goal within Phase E):
+    - Mouse reaches right edge of Mac screen → cursor teleports to Windows
+    - Mouse reaches left edge of Windows screen → cursor teleports to Mac
+    - Requires small agent on Windows that watches cursor position
+    - Similar concept to Synergy/Barrier but custom-built
+
+  This phase is scoped last because:
+    - Phases A-D must be solid first
+    - Windows client is a separate codebase
+    - The seamless cursor handoff is complex and optional
+
+--------------------------------------------------------------------------------
+
+IMPLEMENTATION ORDER SUMMARY
+------------------------------
+
+  Phase A  →  Phase B  →  Phase C  →  Phase D  →  Phase E
+  Harden      Virtual     Input        Polish       Windows
+  (1 sess)    Display     Forward      & Tests      Client
+              (1 sess)    (1 sess)     (1 sess)     (future)
+
+Each phase is independently useful and shippable.
+Never break what works — each phase builds on a stable previous phase.
+
+--------------------------------------------------------------------------------
+
+OPEN QUESTIONS / DECISIONS LOG
+--------------------------------
+
+Q1: CGVirtualDisplay on M3 Pro — bare script or needs .app bundle?
+    Status: Unknown until we test in Phase B.
+    Plan: Try script first, PyInstaller fallback ready.
+
+Q2: Rotation button placement on client?
+    Decision: Top-right corner, always visible, user-controlled.
+    NOT auto-detected from device orientation sensor.
+    Landscape = 1920x1080, Portrait = 1080x1920.
+
+Q3: Windows client format for Phase E?
+    Status: Undecided. Revisit after Phase D is complete.
+    Leading options: Electron app or pure browser.
+
+Q4: HiDPI / Retina for virtual display?
+    Decision: HiDPI off by default (standard 1:1 pixels).
+    Retina doubles pixel count (3840x2160 logical → too heavy for streaming).
+
+================================================================================
