@@ -1,35 +1,107 @@
-# High-Performance Binary-Stream Display Solution 🚀
 
-A DIY alternative to Apple Sidecar or Spacedesk, built to extend a macOS display to any device with a web browser (optimized for Windows/PC).
+# StreamDisplay
 
-## 💡 The Problem
-Extending a Mac display to an older Windows laptop often involves laggy third-party software or expensive hardware capture cards. This project explores the limit of **WebSocket-based video streaming** to provide a low-latency, high-refresh-rate second monitor experience.
+Stream your Mac or Windows screen to any device on your local
+network. No installs on the viewer side — just open a browser.
+Full mouse, keyboard and touch input forwarded back to the host.
 
-## 🛠️ Technical Evolution (The "Vibe" Journey)
-This project wasn't just built; it was optimized through three distinct phases:
+---
 
-1. **Base64 JSON Overload:** Initial versions used Base64 string encoding. This added ~33% data overhead, causing significant Wi-Fi lag.
-2. **The Binary Pivot:** Migrated to a raw **Binary/Blob stream**. By sending raw JPEG bytes, I bypassed the string encoding bottleneck, reducing latency by nearly 40%.
-3. **Hardware Bridge Attempt:** Explored a USB-C to USB-C Thunderbolt bridge to create a 10Gbps local network. (Documented hardware handshake limitations with specific laptop chipsets).
+## What it does
 
-## ✨ Key Features
-* **Binary WebSocket Streaming:** Ultra-fast frame delivery using `Flask-SocketIO` and `eventlet`.
-* **Adaptive Orientation:** JavaScript listeners detect if the receiving device is rotated (Portrait/Landscape) and trigger a `cv2` rotation server-side.
-* **Virtual Cursor Rendering:** Since macOS captures often hide the hardware cursor, I implemented a `pyautogui` coordinate mapper to draw a custom cursor onto the frame buffer.
-* **Low-Impact Compression:** Uses OpenCV JPEG encoding (Quality 60-70) to balance visual clarity with 60FPS targets.
+- **Any device as a second screen** — iPhone, Android, iPad,
+  PC browser, all work out of the box
+- **Native Windows client** — borderless fullscreen pygame app
+  for a real monitor feel
+- **Full input forwarding** — mouse, keyboard, scroll, touch,
+  right-click
+- **Seamless cursor handoff** — move the mouse off the Mac edge
+  and it appears on Windows (KVM-style)
+- **Auto QR code** — scan to connect instantly, no typing IPs
+- **Low latency** — ~30fps JPEG over LAN, tunable quality/fps
+- **Zero client install** — browser client needs nothing.
+  Native client needs only pip install
+- **No drivers, no BetterDisplay, no virtual displays** —
+  pure Python
 
-## 🚀 How to Run
-1. Install requirements: `pip install mss opencv-python flask-socketio eventlet pyautogui`
-2. Run `python server.py`
-3. Open `http://[YOUR_MAC_IP]:5001` on your secondary device.
+---
 
-## 📈 Future Lessons
-While this project proved that software optimization can bridge the gap for older hardware, it also highlighted the efficiency of native display protocols. For users seeking a "no-setup" experience, a hardware HDMI dummy plug combined with this software provides the most stable result.
+## Quick start
 
-## 🛠️ What each "Gear" does (For your knowledge)
-* flask & flask-socketio: The engine that hosts the webpage and handles the "live" connection.
-* eventlet: This is the "Turbocharger." It allows Python to handle the massive flow of binary image data without crashing the web server.
-* mss: The "High-Speed Camera." It’s much faster than standard screenshot tools for capturing macOS frames.
-opencv-python: The "Processor." This handles the JPEG compression, the 9:16 rotation, and drawing the virtual mouse cursor.
-* numpy: The "Math Core." OpenCV and MSS use this to handle the image data as a grid of numbers.
-* pyautogui: The "Radar." This tracks where your mouse is on the Mac so we can draw it on the Windows screen.
+### Mac or Windows as server
+
+    pip install flask flask-socketio eventlet mss opencv-python numpy pyautogui qrcode zeroconf
+    python server.py
+
+Scan the QR code that appears, or open the printed URL on any
+device on the same WiFi network.
+
+### Browser client (any device)
+
+Just open the URL printed on startup in any browser. Works on:
+- iPhone / iPad (Safari)
+- Android (Chrome)
+- Any PC browser (Chrome, Firefox, Edge)
+
+No install. No account. No cloud.
+
+### Windows native client (optional, fullscreen)
+
+    pip install pygame python-socketio websocket-client opencv-python numpy
+    python client_windows.py --url http://192.168.x.x:5001 --token TOKEN
+
+Opens a borderless fullscreen window. F11 toggles windowed mode.
+Esc exits.
+
+---
+
+## Tuning
+
+    # Higher quality, more bandwidth
+    JPEG_QUALITY=85 python server.py
+
+    # Lower quality, better for slow WiFi
+    JPEG_QUALITY=45 FPS=20 python server.py
+
+    # Stream a specific monitor (0 = primary, 1 = secondary...)
+    MONITOR_INDEX=1 python server.py
+
+    # Cursor handoff edge (which Mac edge triggers Windows grab)
+    HANDOFF_EDGE=right python server.py
+
+Default: quality 65, fps 30, last monitor detected.
+
+---
+
+## How it works
+
+1. Server captures the screen with mss (~30fps)
+2. Each frame is JPEG-compressed with OpenCV
+3. Sent as binary over a WebSocket (Flask-SocketIO / eventlet)
+4. Browser renders frames on a canvas, scales to fit screen
+5. Mouse/touch/keyboard events sent back over the same socket
+6. Server replays them with pyautogui
+
+---
+
+## Requirements
+
+- Python 3.10+
+- Mac: grant Accessibility permission to Terminal
+  (System Settings → Privacy & Security → Accessibility)
+- Windows: run terminal as Administrator if input forwarding
+  does not work
+- Both host and viewer must be on the same LAN / WiFi
+
+---
+
+## Cursor handoff (KVM mode)
+
+When running the Windows pygame client alongside the Mac server:
+
+- Move the Mac cursor to the right edge → Windows takes over
+- Move the Windows mouse to the left edge → Mac takes back
+
+Controlled by env vars:
+- HANDOFF_EDGE (server, Mac side): left / right / top / bottom
+- RELEASE_EDGE (client, Windows side): left / right / top / bottom
